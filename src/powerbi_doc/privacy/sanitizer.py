@@ -15,7 +15,7 @@ from .name_classifier import classify_field_name
 from .policy import DEFAULT_POLICY, PolicyDecision, PrivacyLevel, PrivacyPolicy
 
 
-SANITIZER_VERSION = "1.1"
+SANITIZER_VERSION = "1.2"
 
 _DAX_FUNCTION_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.]*)\s*\(")
 _DAX_STRING_RE = re.compile(r'"(?:""|[^"])*"')
@@ -117,6 +117,24 @@ _SAFE_SOURCE_TYPES = {
     "calculated": "calculated",
     "entity": "entity",
     "policyRange": "policyRange",
+}
+
+_SAFE_FILTER_OPERATORS = {
+    "between": "Between",
+    "contains": "Contains",
+    "doesnotcontain": "DoesNotContain",
+    "endswith": "EndsWith",
+    "equals": "Equals",
+    "greaterthan": "GreaterThan",
+    "greaterthanorequal": "GreaterThanOrEqual",
+    "in": "In",
+    "isblank": "IsBlank",
+    "isnotblank": "IsNotBlank",
+    "lessthan": "LessThan",
+    "lessthanorequal": "LessThanOrEqual",
+    "notequals": "NotEquals",
+    "notin": "NotIn",
+    "startswith": "StartsWith",
 }
 
 _SAFE_VISUAL_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,79}$")
@@ -244,7 +262,7 @@ def sanitize_model(
             context.stats.source_metadata_removed += 1
 
     return {
-        "agent_view_version": "1.1",
+        "agent_view_version": "1.2",
         "source_schema_version": source_schema_version,
         "project": {"name": project_name},
         "semantic_model": {
@@ -474,6 +492,7 @@ def _sanitize_pages(entities: list[dict[str, Any]], context: _Context) -> list[d
         _register(context.page_map, raw_name, safe_id)
 
         filters = entity.get("filters")
+        safe_filters = _sanitize_filters(filters, context)
         filter_count = len(filters) if isinstance(filters, list) else 0
         context.stats.filters_removed += filter_count
         if entity.get("display_name") is not None:
@@ -485,6 +504,7 @@ def _sanitize_pages(entities: list[dict[str, Any]], context: _Context) -> list[d
             "name": safe_name,
             "display_name": safe_id,
             "filter_count": filter_count,
+            "filters": safe_filters,
         })
     return output
 
@@ -496,6 +516,7 @@ def _sanitize_visuals(entities: list[dict[str, Any]], context: _Context) -> list
         raw_name = _text(entity.get("name")) or _text(entity.get("id")) or placeholder
         safe_name = _safe_name(raw_name, placeholder, context)
         filters = entity.get("filters")
+        safe_filters = _sanitize_filters(filters, context)
         filter_count = len(filters) if isinstance(filters, list) else 0
         context.stats.filters_removed += filter_count
         has_query = entity.get("query") is not None
@@ -508,6 +529,7 @@ def _sanitize_visuals(entities: list[dict[str, Any]], context: _Context) -> list
             "page": _lookup(context.page_map, _text(entity.get("page"))),
             "visual_type": _safe_visual_type(entity.get("visual_type")),
             "filter_count": filter_count,
+            "filters": safe_filters,
             "has_query": has_query,
         }
         position = _safe_position(entity.get("position"))
@@ -516,6 +538,154 @@ def _sanitize_visuals(entities: list[dict[str, Any]], context: _Context) -> list
         _count_source_fields(entity, context)
         output.append(item)
     return output
+
+
+def _sanitize_filters(value: Any, context: _Context) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+
+    output: list[dict[str, Any]] = []
+    for raw_filter in value:
+        if not isinstance(raw_filter, dict):
+            continue
+
+        references = _filter_references(raw_filter, context)
+        operator = _filter_operator(raw_filter)
+        value_count = _filter_value_count(raw_filter)
+        item: dict[str, Any] = {
+            "references": references,
+            "value_count": value_count,
+            "has_literal": value_count > 0,
+        }
+        if operator is not None:
+            item["operator"] = operator
+        output.append(item)
+    return output
+
+
+def _filter_references(raw_filter: dict[str, Any], context: _Context) -> list[str]:
+    candidates: list[tuple[str, str]] = []
+    _collect_pbir_column_references(raw_filter, candidates)
+
+    direct = raw_filter.get("field")
+    if isinstance(direct, str):
+        direct_ref = _resolve_filter_reference(direct, context)
+        if direct_ref is not None:
+            candidates.append(("", direct_ref))
+
+    references: list[str] = []
+    for table_or_marker, column_or_safe in candidates:
+        if not table_or_marker:
+            safe = column_or_safe
+        else:
+            safe = _resolve_filter_reference(f"{table_or_marker}.{column_or_safe}", context)
+        if safe is not None and safe not in references:
+            references.append(safe)
+    return references
+
+
+def _collect_pbir_column_references(node: Any, output: list[tuple[str, str]]) -> None:
+    if isinstance(node, dict):
+        column = node.get("Column")
+        if isinstance(column, dict):
+            property_name = column.get("Property")
+            expression = column.get("Expression")
+            if isinstance(property_name, str) and isinstance(expression, dict):
+                source_ref = expression.get("SourceRef")
+                if isinstance(source_ref, dict) and isinstance(source_ref.get("Source"), str):
+                    output.append((source_ref["Source"], property_name))
+
+        for child in node.values():
+            _collect_pbir_column_references(child, output)
+    elif isinstance(node, list):
+        for child in node:
+            _collect_pbir_column_references(child, output)
+
+
+def _resolve_filter_reference(raw: str, context: _Context) -> str | None:
+    direct = _lookup(context.column_map, raw)
+    if direct is not None:
+        return direct
+
+    normalized = raw.strip().strip("'")
+    if "." in normalized:
+        table, column = normalized.split(".", 1)
+        direct = _lookup(context.column_map, f"{table}.{column}")
+        if direct is not None:
+            return direct
+
+    matches = [
+        reference.safe_id
+        for reference in context.column_refs
+        if reference.raw_name.casefold() == normalized.casefold()
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _filter_operator(raw_filter: dict[str, Any]) -> str | None:
+    direct = raw_filter.get("operator")
+    if isinstance(direct, str):
+        normalized = re.sub(r"[^a-z]", "", direct.casefold())
+        if normalized in _SAFE_FILTER_OPERATORS:
+            return _SAFE_FILTER_OPERATORS[normalized]
+
+    return _find_operator_key(raw_filter)
+
+
+def _find_operator_key(node: Any) -> str | None:
+    if isinstance(node, dict):
+        for key, child in node.items():
+            normalized = re.sub(r"[^a-z]", "", str(key).casefold())
+            if normalized in _SAFE_FILTER_OPERATORS:
+                return _SAFE_FILTER_OPERATORS[normalized]
+            found = _find_operator_key(child)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for child in node:
+            found = _find_operator_key(child)
+            if found is not None:
+                return found
+    return None
+
+
+def _filter_value_count(raw_filter: dict[str, Any]) -> int:
+    return _count_filter_values(raw_filter)
+
+
+def _count_filter_values(node: Any, *, literal_context: bool = False) -> int:
+    if isinstance(node, dict):
+        count = 0
+        for key, child in node.items():
+            normalized = str(key).casefold()
+            if normalized == "literal":
+                count += _count_filter_values(child, literal_context=True)
+            elif normalized == "value" and (literal_context or _is_scalar(child)):
+                count += _count_scalar_filter_values(child)
+            elif normalized == "values":
+                count += _count_scalar_filter_values(child)
+            else:
+                count += _count_filter_values(child, literal_context=literal_context)
+        return count
+    if isinstance(node, list):
+        return sum(_count_filter_values(child, literal_context=literal_context) for child in node)
+    return 1 if literal_context and _is_scalar(node) else 0
+
+
+def _count_scalar_filter_values(node: Any) -> int:
+    if _is_scalar(node):
+        return 1
+    if isinstance(node, list):
+        return sum(_count_scalar_filter_values(child) for child in node)
+    if isinstance(node, dict):
+        if "Literal" in node:
+            return _count_filter_values(node)
+        return sum(_count_scalar_filter_values(child) for child in node.values())
+    return 0
+
+
+def _is_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
 
 
 def _dax_logic(expression: str, context: _Context) -> dict[str, Any]:
