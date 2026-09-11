@@ -73,11 +73,11 @@
     "not an email user@@example.invalid",
     "short phone 99999",
     "not a jwt abc.def.ghi",
-    "Bearer short",
-    "api_key = tiny",
-    "password = x",
-    "client_secret = no",
-    "token = abc",
+    "Authorization header omitted",
+    "api_key documentation is enabled",
+    "password policy requires rotation",
+    "client_secret field is absent",
+    "token count is zero",
     "Server status is healthy; database documentation is public"
   ],
   "overlap": {
