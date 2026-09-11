@@ -1,0 +1,87 @@
+{
+  "positive": [
+    {
+      "kind": "cpf",
+      "level": "PERSONAL",
+      "text": "customer_cpf = 246.813.579-28",
+      "match": "246.813.579-28"
+    },
+    {
+      "kind": "email",
+      "level": "PERSONAL",
+      "text": "owner = ada.synthetic@example.invalid",
+      "match": "ada.synthetic@example.invalid"
+    },
+    {
+      "kind": "phone",
+      "level": "PERSONAL",
+      "text": "support_phone = +55 (62) 99999-1234",
+      "match": "+55 (62) 99999-1234"
+    },
+    {
+      "kind": "payment_card",
+      "level": "SENSITIVE_SECRET",
+      "text": "test_card = 4000 0000 0000 0002",
+      "match": "4000 0000 0000 0002"
+    },
+    {
+      "kind": "jwt",
+      "level": "SENSITIVE_SECRET",
+      "text": "jwt = eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJzeW50aGV0aWMtdXNlciIsInNjb3BlIjoiZGVtbyJ9.c3ludGhldGljLXNpZw",
+      "match": "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJzeW50aGV0aWMtdXNlciIsInNjb3BlIjoiZGVtbyJ9.c3ludGhldGljLXNpZw"
+    },
+    {
+      "kind": "bearer",
+      "level": "SENSITIVE_SECRET",
+      "text": "Authorization: Bearer synthetic_bearer_token_ABC123XYZ",
+      "match": "synthetic_bearer_token_ABC123XYZ"
+    },
+    {
+      "kind": "api_key",
+      "level": "SENSITIVE_SECRET",
+      "text": "api_key = \"synthetic_api_key_ABC123XYZ987\"",
+      "match": "synthetic_api_key_ABC123XYZ987"
+    },
+    {
+      "kind": "password",
+      "level": "SENSITIVE_SECRET",
+      "text": "password = \"Synthetic-Pass-2026!\"",
+      "match": "Synthetic-Pass-2026!"
+    },
+    {
+      "kind": "client_secret",
+      "level": "SENSITIVE_SECRET",
+      "text": "client_secret = 'synthetic_client_secret_ABC987654'",
+      "match": "synthetic_client_secret_ABC987654"
+    },
+    {
+      "kind": "token",
+      "level": "SENSITIVE_SECRET",
+      "text": "access_token = synthetic_access_token_123456789",
+      "match": "synthetic_access_token_123456789"
+    },
+    {
+      "kind": "connection_string",
+      "level": "SENSITIVE_SECRET",
+      "text": "connection_string = \"Server=synthetic-db.invalid;Database=Demo;User Id=demo_user;Password=Synthetic-Pass-2026!;\"",
+      "match": "Server=synthetic-db.invalid;Database=Demo;User Id=demo_user;Password=Synthetic-Pass-2026!;"
+    }
+  ],
+  "negative": [
+    "invalid cpf 246.813.579-29",
+    "invalid test card 4000 0000 0000 0003",
+    "not an email user@@example.invalid",
+    "short phone 99999",
+    "not a jwt abc.def.ghi",
+    "Bearer short",
+    "api_key = tiny",
+    "password = x",
+    "client_secret = no",
+    "token = abc",
+    "Server status is healthy; database documentation is public"
+  ],
+  "overlap": {
+    "bearer_jwt": "Authorization: Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJzeW50aGV0aWMtdXNlciIsInNjb3BlIjoiZGVtbyJ9.c3ludGhldGljLXNpZw",
+    "connection_string": "Server=synthetic-db.invalid;Database=Demo;User Id=demo_user;Password=Synthetic-Pass-2026!;"
+  }
+}
