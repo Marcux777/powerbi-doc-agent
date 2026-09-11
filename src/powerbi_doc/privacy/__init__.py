@@ -1,6 +1,11 @@
 """Privacy primitives for Power BI metadata handling."""
 
 from .detector import SensitiveFinding, SensitiveKind, detect_sensitive
+from .name_classifier import (
+    FieldNameClassification,
+    FieldSemanticCategory,
+    classify_field_name,
+)
 from .policy import (
     BALANCED_POLICY,
     DEFAULT_POLICY,
@@ -15,6 +20,8 @@ from .policy import (
 __all__ = [
     "BALANCED_POLICY",
     "DEFAULT_POLICY",
+    "FieldNameClassification",
+    "FieldSemanticCategory",
     "METADATA_ONLY_POLICY",
     "STRICT_POLICY",
     "PolicyDecision",
@@ -22,6 +29,7 @@ __all__ = [
     "PrivacyPolicy",
     "SensitiveFinding",
     "SensitiveKind",
+    "classify_field_name",
     "detect_sensitive",
     "get_policy",
 ]
