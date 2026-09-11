@@ -169,9 +169,72 @@ class PrivacySanitizerTests(unittest.TestCase):
         self.assertEqual(page["filter_count"], 2)
         self.assertEqual(visual["filter_count"], 1)
         self.assertTrue(visual["has_query"])
-        self.assertNotIn("filters", page)
-        self.assertNotIn("filters", visual)
+        self.assertEqual(len(page["filters"]), 2)
+        self.assertEqual(len(visual["filters"]), 1)
         self.assertNotIn("query", visual)
+
+    def test_strict_pbir_filters_preserve_references_without_email_or_cpf_literals(self):
+        model = deepcopy(SYNTHETIC_MODEL)
+        model["semantic_model"]["columns"].append(
+            {
+                "id": "Patients.Email",
+                "table": "Patients",
+                "name": "Email",
+                "data_type": "string",
+                "source_column": "email",
+                "source_file": "Synthetic.SemanticModel/definition/tables/Patients.tmdl",
+            }
+        )
+        model["report"]["pages"][0]["filters"] = [
+            {
+                "name": "email-filter",
+                "operator": "In",
+                "expression": {
+                    "Column": {
+                        "Expression": {"SourceRef": {"Source": "Patients"}},
+                        "Property": "Email",
+                    }
+                },
+                "values": [
+                    {"Literal": {"Value": "'ada.synthetic@example.invalid'"}}
+                ],
+            },
+            {
+                "name": "cpf-filter",
+                "operator": "In",
+                "expression": {
+                    "Column": {
+                        "Expression": {"SourceRef": {"Source": "Patients"}},
+                        "Property": "customer_cpf",
+                    }
+                },
+                "values": [
+                    {"Literal": {"Value": "'246.813.579-28'"}}
+                ],
+            },
+        ]
+
+        view = sanitize_model(model)
+        page = view["report"]["pages"][0]
+        payload = json.dumps(view, ensure_ascii=False, sort_keys=True)
+
+        self.assertEqual(page["filter_count"], 2)
+        self.assertEqual(len(page["filters"]), 2)
+        self.assertEqual(page["filters"][0]["references"], ["TABLE_001.COLUMN_005"])
+        self.assertEqual(page["filters"][1]["references"], ["TABLE_001.COLUMN_001"])
+        self.assertEqual(page["filters"][0]["operator"], "In")
+        self.assertEqual(page["filters"][1]["operator"], "In")
+        self.assertEqual(page["filters"][0]["value_count"], 1)
+        self.assertEqual(page["filters"][1]["value_count"], 1)
+        self.assertTrue(page["filters"][0]["has_literal"])
+        self.assertTrue(page["filters"][1]["has_literal"])
+
+        self.assertNotIn("ada.synthetic@example.invalid", payload)
+        self.assertNotIn("246.813.579-28", payload)
+        self.assertNotIn("Email", payload)
+        self.assertNotIn("customer_cpf", payload)
+        self.assertNotIn("Literal", payload)
+        self.assertNotIn("Value", payload)
 
     def test_preserves_structure_and_relationships_with_consistent_pseudonyms(self):
         view = sanitize_model(deepcopy(SYNTHETIC_MODEL))
