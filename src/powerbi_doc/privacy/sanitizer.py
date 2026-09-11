@@ -131,6 +131,11 @@ _CREDENTIAL_CONTEXT_RE = re.compile(
     r"\s*=\s*$",
     re.IGNORECASE,
 )
+_SOURCE_CONNECTOR_CONTEXT_RE = re.compile(
+    r"\b(?:Sql\.Database|PostgreSQL\.Database|MySQL\.Database|Odbc\.DataSource)"
+    r"\s*\([^)]*$",
+    re.IGNORECASE,
+)
 _SECRET_LABEL_RE = re.compile(
     r"(?:api[_-]?key|apikey|password|pwd|client[_-]?secret|"
     r"access[_-]?token|refresh[_-]?token|auth[_-]?token|token)\s*[:=]",
@@ -687,6 +692,8 @@ def _sanitize_literal_content(content: str, preceding: str) -> str:
         return "<REDACTED_PATH>"
     if _url_requires_redaction(content):
         return "<REDACTED_URL>"
+    if _source_connector_context(preceding):
+        return "<REDACTED_SOURCE>"
     if _credential_context(preceding):
         return "<REDACTED>"
     if detect_sensitive(content):
@@ -702,6 +709,10 @@ def _sanitize_literal_content(content: str, preceding: str) -> str:
 
 def _credential_context(preceding: str) -> bool:
     return bool(_CREDENTIAL_CONTEXT_RE.search(preceding.rstrip()))
+
+
+def _source_connector_context(preceding: str) -> bool:
+    return bool(_SOURCE_CONNECTOR_CONTEXT_RE.search(preceding[-240:]))
 
 
 def _looks_private_path(value: str) -> bool:
