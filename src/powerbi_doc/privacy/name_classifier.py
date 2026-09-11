@@ -202,14 +202,14 @@ def classify_field_name(name: str) -> tuple[FieldNameClassification, ...]:
 
 
 def _tokenize(name: str) -> tuple[str, ...]:
-    split = _CAMEL_ACRONYM_RE.sub(r"\1 \2", name)
-    split = _CAMEL_BOUNDARY_RE.sub(r"\1 \2", split)
     ascii_text = "".join(
         character
-        for character in unicodedata.normalize("NFKD", split)
+        for character in unicodedata.normalize("NFKD", name)
         if not unicodedata.combining(character)
     )
-    normalized = _NON_ALNUM_RE.sub(" ", ascii_text.lower()).strip()
+    split = _CAMEL_ACRONYM_RE.sub(r"\1 \2", ascii_text)
+    split = _CAMEL_BOUNDARY_RE.sub(r"\1 \2", split)
+    normalized = _NON_ALNUM_RE.sub(" ", split.lower()).strip()
     return tuple(normalized.split()) if normalized else ()
 
 
