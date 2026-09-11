@@ -1,5 +1,0 @@
-relationship 11111111-1111-1111-1111-111111111111
-    fromColumn: Sales.'Customer Id'
-    toColumn: Customers.'Customer Id'
-    crossFilteringBehavior: bothDirections
-    isActive: true
