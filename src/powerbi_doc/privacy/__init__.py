@@ -16,7 +16,13 @@ from .policy import (
     PrivacyPolicy,
     get_policy,
 )
-from .sanitizer import SANITIZER_VERSION, sanitize_model, write_agent_view
+from .sanitizer import (
+    SANITIZER_VERSION,
+    sanitize_dax_expression,
+    sanitize_m_expression,
+    sanitize_model,
+    write_agent_view,
+)
 
 __all__ = [
     "BALANCED_POLICY",
@@ -34,6 +40,8 @@ __all__ = [
     "classify_field_name",
     "detect_sensitive",
     "get_policy",
+    "sanitize_dax_expression",
+    "sanitize_m_expression",
     "sanitize_model",
     "write_agent_view",
 ]
