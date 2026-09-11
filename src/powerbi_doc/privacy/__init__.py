@@ -23,6 +23,7 @@ from .sanitizer import (
     sanitize_model,
     write_agent_view,
 )
+from .scan import scan_privacy
 
 __all__ = [
     "BALANCED_POLICY",
@@ -43,5 +44,6 @@ __all__ = [
     "sanitize_dax_expression",
     "sanitize_m_expression",
     "sanitize_model",
+    "scan_privacy",
     "write_agent_view",
 ]
