@@ -16,6 +16,7 @@ from .policy import (
     PrivacyPolicy,
     get_policy,
 )
+from .sanitizer import SANITIZER_VERSION, sanitize_model, write_agent_view
 
 __all__ = [
     "BALANCED_POLICY",
@@ -23,6 +24,7 @@ __all__ = [
     "FieldNameClassification",
     "FieldSemanticCategory",
     "METADATA_ONLY_POLICY",
+    "SANITIZER_VERSION",
     "STRICT_POLICY",
     "PolicyDecision",
     "PrivacyLevel",
@@ -32,4 +34,6 @@ __all__ = [
     "classify_field_name",
     "detect_sensitive",
     "get_policy",
+    "sanitize_model",
+    "write_agent_view",
 ]
