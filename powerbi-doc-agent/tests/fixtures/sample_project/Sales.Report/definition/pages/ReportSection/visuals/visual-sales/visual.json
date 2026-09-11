@@ -1,0 +1,9 @@
+{
+  "name": "visual-sales",
+  "position": {"x": 10, "y": 20, "z": 0, "height": 300, "width": 500},
+  "visual": {
+    "visualType": "barChart",
+    "query": {"queryState": {"Values": {"projections": []}}}
+  },
+  "filterConfig": {"filters": []}
+}
