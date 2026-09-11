@@ -1,0 +1,8 @@
+table Customers
+    column 'Customer Id'
+        dataType: int64
+        sourceColumn: CustomerId
+
+    column Name
+        dataType: string
+        sourceColumn: CustomerName
