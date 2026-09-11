@@ -1,5 +1,6 @@
-"""Privacy policy primitives for Power BI metadata handling."""
+"""Privacy primitives for Power BI metadata handling."""
 
+from .detector import SensitiveFinding, SensitiveKind, detect_sensitive
 from .policy import (
     BALANCED_POLICY,
     DEFAULT_POLICY,
@@ -19,5 +20,8 @@ __all__ = [
     "PolicyDecision",
     "PrivacyLevel",
     "PrivacyPolicy",
+    "SensitiveFinding",
+    "SensitiveKind",
+    "detect_sensitive",
     "get_policy",
 ]
