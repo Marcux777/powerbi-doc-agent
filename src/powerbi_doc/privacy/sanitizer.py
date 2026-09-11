@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import ipaddress
 import json
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 from .detector import detect_sensitive
 from .name_classifier import classify_field_name
 from .policy import DEFAULT_POLICY, PolicyDecision, PrivacyLevel, PrivacyPolicy
 
 
-SANITIZER_VERSION = "1.0"
+SANITIZER_VERSION = "1.1"
 
 _DAX_FUNCTION_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.]*)\s*\(")
 _DAX_STRING_RE = re.compile(r'"(?:""|[^"])*"')
@@ -119,6 +121,42 @@ _SAFE_SOURCE_TYPES = {
 
 _SAFE_VISUAL_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,79}$")
 _SAFE_SCHEMA_VERSION_RE = re.compile(r"^\d+(?:\.\d+)*$")
+_PRIVATE_PATH_RE = re.compile(
+    r"^(?:[A-Za-z]:[\\/]|\\\\|//[^/\\]+[\\/]|/(?:home|Users|root|private|var|etc|opt)/)",
+    re.IGNORECASE,
+)
+_CREDENTIAL_CONTEXT_RE = re.compile(
+    r"(?:authorization|api[_-]?key|apikey|x-api-key|password|pwd|"
+    r"client[_-]?secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|bearer)"
+    r"\s*=\s*$",
+    re.IGNORECASE,
+)
+_SOURCE_CONNECTOR_CONTEXT_RE = re.compile(
+    r"\b(?:Sql\.Database|PostgreSQL\.Database|MySQL\.Database|Odbc\.DataSource)"
+    r"\s*\([^)]*$",
+    re.IGNORECASE,
+)
+_SECRET_LABEL_RE = re.compile(
+    r"(?:api[_-]?key|apikey|password|pwd|client[_-]?secret|"
+    r"access[_-]?token|refresh[_-]?token|auth[_-]?token|token)\s*[:=]",
+    re.IGNORECASE,
+)
+_HIGH_ENTROPY_RE = re.compile(r"^[A-Za-z0-9+/_=-]{24,}$")
+_SENSITIVE_URL_QUERY_KEYS = {
+    "apikey",
+    "authorization",
+    "auth",
+    "code",
+    "clientsecret",
+    "key",
+    "password",
+    "pwd",
+    "sig",
+    "signature",
+    "token",
+    "accesstoken",
+    "refreshtoken",
+}
 
 
 @dataclass(slots=True)
@@ -206,7 +244,7 @@ def sanitize_model(
             context.stats.source_metadata_removed += 1
 
     return {
-        "agent_view_version": "1.0",
+        "agent_view_version": "1.1",
         "source_schema_version": source_schema_version,
         "project": {"name": project_name},
         "semantic_model": {
@@ -254,6 +292,38 @@ def write_agent_view(
         encoding="utf-8",
     )
     return destination
+
+
+def sanitize_dax_expression(
+    expression: str,
+    *,
+    reference_map: dict[str, str] | None = None,
+    table_map: dict[str, str] | None = None,
+) -> str:
+    """Sanitize DAX while preserving useful operators, numbers, functions and references."""
+
+    if not isinstance(expression, str):
+        raise TypeError("expression must be a string")
+
+    skeleton, literals = _sanitize_expression_literals(expression, language="dax")
+    skeleton = _replace_exact_references(skeleton, reference_map or {})
+    skeleton = _replace_dax_tables(skeleton, table_map or {})
+    return _restore_literals(skeleton, literals).strip()
+
+
+def sanitize_m_expression(
+    expression: str,
+    *,
+    reference_map: dict[str, str] | None = None,
+) -> str:
+    """Sanitize Power Query M while preserving useful transformations and rule logic."""
+
+    if not isinstance(expression, str):
+        raise TypeError("expression must be a string")
+
+    skeleton, literals = _sanitize_expression_literals(expression, language="m")
+    skeleton = _replace_exact_references(skeleton, reference_map or {})
+    return _restore_literals(skeleton, literals).strip()
 
 
 def _sanitize_tables(entities: list[dict[str, Any]], context: _Context) -> list[dict[str, Any]]:
@@ -361,7 +431,7 @@ def _sanitize_partitions(entities: list[dict[str, Any]], context: _Context) -> l
 
         expression = entity.get("source_expression")
         if isinstance(expression, str) and expression.strip():
-            item["source"] = _m_logic(expression)
+            item["source"] = _m_logic(expression, context, raw_table)
             context.stats.raw_expressions_removed += 1
 
         _count_source_fields(entity, context)
@@ -460,24 +530,42 @@ def _dax_logic(expression: str, context: _Context) -> dict[str, Any]:
             functions.append(function)
 
     dependencies: list[str] = []
+    reference_map: dict[str, str] = {}
+    table_map: dict[str, str] = {}
     for reference in context.column_refs:
-        if reference.sensitive or not reference.raw_table or not reference.raw_name:
+        if not reference.raw_table or not reference.raw_name:
             continue
-        patterns = (
-            f"{reference.raw_table}[{reference.raw_name}]",
-            f"'{reference.raw_table}'[{reference.raw_name}]",
-        )
-        if any(pattern.casefold() in cleaned.casefold() for pattern in patterns):
-            if reference.safe_id not in dependencies:
-                dependencies.append(reference.safe_id)
+        safe_table, safe_column = _split_safe_column_id(reference.safe_id)
+        safe_reference = f"{safe_table}[{safe_column}]"
+        reference_map[f"{reference.raw_table}[{reference.raw_name}]"] = safe_reference
+        reference_map[f"'{reference.raw_table}'[{reference.raw_name}]"] = safe_reference
+        table_map.setdefault(reference.raw_table, safe_table)
+
+        if not reference.sensitive:
+            patterns = (
+                f"{reference.raw_table}[{reference.raw_name}]",
+                f"'{reference.raw_table}'[{reference.raw_name}]",
+            )
+            if any(pattern.casefold() in cleaned.casefold() for pattern in patterns):
+                if reference.safe_id not in dependencies:
+                    dependencies.append(reference.safe_id)
 
     return {
         "functions": functions,
         "dependencies": dependencies,
+        "sanitized_expression": sanitize_dax_expression(
+            expression,
+            reference_map=reference_map,
+            table_map=table_map,
+        ),
     }
 
 
-def _m_logic(expression: str) -> dict[str, Any]:
+def _m_logic(
+    expression: str,
+    context: _Context | None = None,
+    raw_table: str = "",
+) -> dict[str, Any]:
     connector = None
     for pattern, category in _M_CONNECTORS:
         if pattern.search(expression):
@@ -489,10 +577,229 @@ def _m_logic(expression: str) -> dict[str, Any]:
         if pattern.search(expression) and category not in transformations:
             transformations.append(category)
 
+    reference_map: dict[str, str] = {}
+    if context is not None:
+        for reference in context.column_refs:
+            if raw_table and reference.raw_table.casefold() != raw_table.casefold():
+                continue
+            _, safe_column = _split_safe_column_id(reference.safe_id)
+            reference_map[f"[{reference.raw_name}]"] = f"[{safe_column}]"
+            reference_map[f"[#{_quote_m_identifier(reference.raw_name)}]"] = (
+                f"[#{_quote_m_identifier(safe_column)}]"
+            )
+
     return {
         "connector": connector,
         "transformations": transformations,
+        "sanitized_expression": sanitize_m_expression(
+            expression,
+            reference_map=reference_map,
+        ),
     }
+
+
+def _sanitize_expression_literals(
+    expression: str,
+    *,
+    language: str,
+) -> tuple[str, dict[str, str]]:
+    output: list[str] = []
+    literals: dict[str, str] = {}
+    index = 0
+    literal_index = 0
+
+    while index < len(expression):
+        if expression.startswith("//", index):
+            end = expression.find("\n", index + 2)
+            if end == -1:
+                break
+            output.append("\n")
+            index = end + 1
+            continue
+
+        if expression.startswith("/*", index):
+            end = expression.find("*/", index + 2)
+            output.append(" ")
+            index = len(expression) if end == -1 else end + 2
+            continue
+
+        character = expression[index]
+
+        if language == "dax" and character == "'":
+            identifier, index = _consume_single_quoted_identifier(expression, index)
+            output.append(identifier)
+            continue
+
+        if character == '"':
+            if language == "m" and output and output[-1].endswith("#"):
+                identifier, index = _consume_double_quoted_identifier(expression, index)
+                output.append(identifier)
+                continue
+
+            content, index = _consume_double_quoted_string(expression, index)
+            preceding = "".join(output)[-160:]
+            safe_content = _sanitize_literal_content(content, preceding)
+            placeholder = f"__PBI_LITERAL_{literal_index:04d}__"
+            literal_index += 1
+            literals[placeholder] = f'"{safe_content.replace(chr(34), chr(34) * 2)}"'
+            output.append(placeholder)
+            continue
+
+        output.append(character)
+        index += 1
+
+    return "".join(output), literals
+
+
+def _consume_double_quoted_string(expression: str, start: int) -> tuple[str, int]:
+    index = start + 1
+    characters: list[str] = []
+    while index < len(expression):
+        if expression[index] == '"':
+            if index + 1 < len(expression) and expression[index + 1] == '"':
+                characters.append('"')
+                index += 2
+                continue
+            return "".join(characters), index + 1
+        characters.append(expression[index])
+        index += 1
+    return "".join(characters), index
+
+
+def _consume_double_quoted_identifier(expression: str, start: int) -> tuple[str, int]:
+    content, end = _consume_double_quoted_string(expression, start)
+    escaped = content.replace('"', '""')
+    return f'"{escaped}"', end
+
+
+def _consume_single_quoted_identifier(expression: str, start: int) -> tuple[str, int]:
+    index = start + 1
+    characters = ["'"]
+    while index < len(expression):
+        characters.append(expression[index])
+        if expression[index] == "'":
+            if index + 1 < len(expression) and expression[index + 1] == "'":
+                characters.append("'")
+                index += 2
+                continue
+            return "".join(characters), index + 1
+        index += 1
+    return "".join(characters), index
+
+
+def _sanitize_literal_content(content: str, preceding: str) -> str:
+    if _looks_private_path(content):
+        return "<REDACTED_PATH>"
+    if _url_requires_redaction(content):
+        return "<REDACTED_URL>"
+    if _source_connector_context(preceding):
+        return "<REDACTED_SOURCE>"
+    if _credential_context(preceding):
+        return "<REDACTED>"
+    if detect_sensitive(content):
+        return "<REDACTED>"
+    if _SECRET_LABEL_RE.search(content):
+        return "<REDACTED>"
+    if content.strip().casefold().startswith("bearer "):
+        return "<REDACTED>"
+    if _looks_high_entropy_secret(content):
+        return "<REDACTED>"
+    return content
+
+
+def _credential_context(preceding: str) -> bool:
+    return bool(_CREDENTIAL_CONTEXT_RE.search(preceding.rstrip()))
+
+
+def _source_connector_context(preceding: str) -> bool:
+    return bool(_SOURCE_CONNECTOR_CONTEXT_RE.search(preceding[-240:]))
+
+
+def _looks_private_path(value: str) -> bool:
+    return bool(_PRIVATE_PATH_RE.match(value.strip()))
+
+
+def _url_requires_redaction(value: str) -> bool:
+    raw = value.strip()
+    if not re.match(r"^https?://", raw, re.IGNORECASE):
+        return False
+
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return True
+
+    if parsed.username or parsed.password:
+        return True
+
+    for key, _ in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized = re.sub(r"[^a-z0-9]", "", key.casefold())
+        if normalized in _SENSITIVE_URL_QUERY_KEYS:
+            return True
+
+    host = (parsed.hostname or "").casefold()
+    if not host:
+        return True
+    if host == "localhost" or host.endswith((".local", ".internal", ".lan")):
+        return True
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_private or address.is_loopback or address.is_link_local
+
+
+def _looks_high_entropy_secret(value: str) -> bool:
+    compact = value.strip()
+    if not _HIGH_ENTROPY_RE.fullmatch(compact):
+        return False
+    has_alpha = any(character.isalpha() for character in compact)
+    has_digit = any(character.isdigit() for character in compact)
+    return has_alpha and has_digit
+
+
+def _replace_exact_references(text: str, mapping: dict[str, str]) -> str:
+    result = text
+    for raw, safe in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
+        if not raw:
+            continue
+        result = re.sub(re.escape(raw), lambda _: safe, result, flags=re.IGNORECASE)
+    return result
+
+
+def _replace_dax_tables(text: str, mapping: dict[str, str]) -> str:
+    result = text
+    for raw, safe in sorted(mapping.items(), key=lambda item: len(item[0]), reverse=True):
+        if not raw:
+            continue
+        quoted = f"'{raw}'"
+        result = re.sub(re.escape(quoted), lambda _: safe, result, flags=re.IGNORECASE)
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", raw):
+            result = re.sub(
+                rf"(?<![A-Za-z0-9_]){re.escape(raw)}(?![A-Za-z0-9_])",
+                lambda _: safe,
+                result,
+                flags=re.IGNORECASE,
+            )
+    return result
+
+
+def _restore_literals(text: str, literals: dict[str, str]) -> str:
+    result = text
+    for placeholder, literal in literals.items():
+        result = result.replace(placeholder, literal)
+    return result
+
+
+def _split_safe_column_id(safe_id: str) -> tuple[str, str]:
+    if "." not in safe_id:
+        return "TABLE_UNKNOWN", safe_id
+    return safe_id.split(".", 1)
+
+
+def _quote_m_identifier(value: str) -> str:
+    return f'"{value.replace(chr(34), chr(34) * 2)}"'
 
 
 def _safe_name(value: Any, placeholder: str, context: _Context) -> str:
