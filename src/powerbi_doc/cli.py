@@ -4,10 +4,12 @@ import argparse
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from powerbi_doc.diff import diff_models, render_diff_markdown
 from powerbi_doc.extractors.pbip import UnsupportedFormatError, scan_project
 from powerbi_doc.generator import generate_markdown
+from powerbi_doc.privacy.scan import scan_privacy
 
 
 def _load_json(path: str | Path) -> dict:
@@ -18,7 +20,7 @@ def _load_json(path: str | Path) -> dict:
     return value
 
 
-def _write_json(path: str | Path, value: dict) -> Path:
+def _write_json(path: str | Path, value: Any) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
@@ -50,6 +52,17 @@ def _build_parser() -> argparse.ArgumentParser:
     diff.add_argument("-o", "--output", default="diff.json", help="Diff JSON output path.")
     diff.add_argument("--markdown", help="Optional Markdown summary path.")
 
+    privacy_scan = subparsers.add_parser(
+        "privacy-scan",
+        help="Scan JSON locally for privacy findings before any LLM submission.",
+    )
+    privacy_scan.add_argument("model", help="JSON payload to inspect locally.")
+    privacy_scan.add_argument(
+        "-o",
+        "--output",
+        help="Optional JSON report path. Without it, the report is printed to stdout.",
+    )
+
     return parser
 
 
@@ -78,6 +91,14 @@ def main(argv: list[str] | None = None) -> int:
                 markdown.write_text(render_diff_markdown(result), encoding="utf-8")
             print(f"Diff written to {target}")
             return 0
+
+        if args.command == "privacy-scan":
+            report = scan_privacy(_load_json(args.model))
+            if args.output:
+                _write_json(args.output, report)
+            else:
+                print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
+            return 0 if not report else 3
     except (OSError, ValueError, json.JSONDecodeError, UnsupportedFormatError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
