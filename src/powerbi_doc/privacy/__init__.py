@@ -1,5 +1,10 @@
 """Privacy primitives for Power BI metadata handling."""
 
+from .bundle import (
+    MANIFEST_VERSION,
+    SANITIZATION_RULES,
+    write_sanitized_bundle,
+)
 from .detector import SensitiveFinding, SensitiveKind, detect_sensitive
 from .name_classifier import (
     FieldNameClassification,
@@ -30,7 +35,9 @@ __all__ = [
     "DEFAULT_POLICY",
     "FieldNameClassification",
     "FieldSemanticCategory",
+    "MANIFEST_VERSION",
     "METADATA_ONLY_POLICY",
+    "SANITIZATION_RULES",
     "SANITIZER_VERSION",
     "STRICT_POLICY",
     "PolicyDecision",
@@ -46,4 +53,5 @@ __all__ = [
     "sanitize_model",
     "scan_privacy",
     "write_agent_view",
+    "write_sanitized_bundle",
 ]

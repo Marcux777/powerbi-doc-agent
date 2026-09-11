@@ -9,6 +9,8 @@ from typing import Any
 from powerbi_doc.diff import diff_models, render_diff_markdown
 from powerbi_doc.extractors.pbip import UnsupportedFormatError, scan_project
 from powerbi_doc.generator import generate_markdown
+from powerbi_doc.privacy.bundle import write_sanitized_bundle
+from powerbi_doc.privacy.policy import get_policy
 from powerbi_doc.privacy.scan import scan_privacy
 
 
@@ -63,6 +65,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Optional JSON report path. Without it, the report is printed to stdout.",
     )
 
+    sanitize = subparsers.add_parser(
+        "sanitize",
+        help="Create agent_view.json and privacy-manifest.json from model.json.",
+    )
+    sanitize.add_argument("model", help="Raw canonical model JSON path.")
+    sanitize.add_argument(
+        "--policy",
+        choices=("strict", "balanced", "metadata-only"),
+        default="strict",
+        help="Privacy policy to apply. Defaults to strict.",
+    )
+    sanitize.add_argument(
+        "--agent-output",
+        help="Optional agent-view output path. Defaults to agent_view.json beside model.json.",
+    )
+    sanitize.add_argument(
+        "--manifest-output",
+        help="Optional manifest output path. Defaults to privacy-manifest.json beside model.json.",
+    )
+
     return parser
 
 
@@ -99,6 +121,16 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True))
             return 0 if not report else 3
+
+        if args.command == "sanitize":
+            agent_path, manifest_path = write_sanitized_bundle(
+                args.model,
+                agent_output=args.agent_output,
+                manifest_output=args.manifest_output,
+                policy=get_policy(args.policy),
+            )
+            print(f"Sanitized -> {agent_path}; manifest -> {manifest_path}")
+            return 0
     except (OSError, ValueError, json.JSONDecodeError, UnsupportedFormatError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
